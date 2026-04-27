@@ -9,4 +9,5 @@ public class Group
     public decimal CurrentBalance { get; set; } = 0; // Lưu số dư hiện tại để load cho nhanh
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.Now;
+    public string JoinCode { get; set; } = Guid.NewGuid().ToString().Substring(0, 6).ToUpper();
 }

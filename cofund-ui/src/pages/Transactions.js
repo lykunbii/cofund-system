@@ -4,9 +4,29 @@ import axios from 'axios';
 function Transactions({ transactions, refreshData }) {
   const [inputAmount, setInputAmount] = useState('');
   const [inputNote, setInputNote] = useState('');
+  
+  // State mới để chứa đường link ảnh QR
+  const [qrUrl, setQrUrl] = useState(null); 
 
   const TRANSACTIONS_URL = 'http://localhost:5099/api/Transactions';
 
+  // HÀM MỚI: Gọi API để lấy mã QR
+  const handleGenerateQR = async () => {
+    if (!inputAmount || inputAmount <= 0) {
+      alert("Vui lòng nhập số tiền hợp lệ để tạo QR!");
+      return;
+    }
+    try {
+      const note = inputNote || "Nop tien quy";
+      // Gọi API GET mà chúng ta vừa viết ở Backend
+      const res = await axios.get(`${TRANSACTIONS_URL}/payment-qr?amount=${inputAmount}&note=${note}`);
+      setQrUrl(res.data.qrUrl);
+    } catch (err) {
+      alert("Không thể tạo mã QR. Hãy kiểm tra Backend!");
+    }
+  };
+
+  // Hàm xử lý lưu giao dịch vào DB
   const handleAction = async (type) => {
     if (!inputAmount || inputAmount <= 0) {
       alert("Vui lòng nhập số tiền hợp lệ!");
@@ -15,7 +35,7 @@ function Transactions({ transactions, refreshData }) {
 
     try {
       const payload = {
-        userId: 1,
+        userId: 1, // Tạm thời hardcode, sau này sẽ lấy từ tài khoản đăng nhập
         groupId: 1,
         amount: Number(inputAmount),
         transactionType: type,
@@ -24,11 +44,13 @@ function Transactions({ transactions, refreshData }) {
 
       await axios.post(TRANSACTIONS_URL, payload);
       
+      // Thành công thì xóa form và ẩn mã QR đi
       setInputAmount('');
       setInputNote('');
-      await refreshData(); // Gọi hàm tải lại dữ liệu mới nhất
+      setQrUrl(null); 
       
-      alert(type === 1 ? "Nộp tiền thành công!" : "Rút tiền thành công!");
+      await refreshData(); 
+      alert(type === 1 ? "Ghi nhận nộp tiền thành công!" : "Ghi nhận rút tiền thành công!");
     } catch (err) {
       if (err.response && err.response.data) {
         alert("Lỗi: " + err.response.data);
@@ -41,7 +63,7 @@ function Transactions({ transactions, refreshData }) {
   return (
     <div style={{ display: 'flex', gap: '24px', alignItems: 'flex-start' }}>
       
-      {/* CỘT TRÁI: FORM NHẬP LIỆU */}
+      {/* CỘT TRÁI: FORM NHẬP LIỆU & QR CODE */}
       <div style={{ flex: 1, backgroundColor: 'white', padding: '24px', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
         <h3 style={{ marginTop: 0, marginBottom: '20px', color: '#0f172a' }}>Tạo Giao Dịch Mới</h3>
         
@@ -62,26 +84,52 @@ function Transactions({ transactions, refreshData }) {
             type="text" 
             value={inputNote}
             onChange={(e) => setInputNote(e.target.value)}
-            placeholder="Ví dụ: Nộp quỹ tháng 5"
+            placeholder="Ví dụ: Tien quy thang 5"
             style={{ width: '100%', padding: '10px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
           />
         </div>
 
-        <div style={{ display: 'flex', gap: '12px' }}>
-          <button onClick={() => handleAction(1)} style={{ flex: 1, padding: '12px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>
-            📥 Nộp Quỹ
+        {/* --- KHU VỰC HIỂN THỊ MÃ QR --- */}
+        {qrUrl && (
+          <div style={{ marginBottom: '20px', textAlign: 'center', padding: '16px', backgroundColor: '#f8fafc', borderRadius: '8px', border: '1px dashed #cbd5e1' }}>
+            <p style={{ margin: '0 0 10px 0', fontSize: '14px', fontWeight: 'bold', color: '#334155' }}>Mã VietQR Thanh Toán</p>
+            <img src={qrUrl} alt="Mã QR Thanh Toán" style={{ width: '200px', height: '200px', borderRadius: '8px' }} />
+            <p style={{ margin: '10px 0 0 0', fontSize: '12px', color: '#64748b' }}>Sử dụng App ngân hàng để quét mã này</p>
+          </div>
+        )}
+
+        {/* CÁC NÚT THAO TÁC */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          
+          {/* Nút Tạo QR */}
+          <button 
+            onClick={handleGenerateQR} 
+            style={{ padding: '12px', backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>
+            📱 Lấy mã QR Nộp tiền
           </button>
-          <button onClick={() => handleAction(2)} style={{ flex: 1, padding: '12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>
-            📤 Rút Quỹ
-          </button>
+
+          <div style={{ display: 'flex', gap: '12px' }}>
+            {/* Nút Nộp (Lưu DB) */}
+            <button 
+              onClick={() => handleAction(1)} 
+              style={{ flex: 1, padding: '12px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>
+              ✅ Xác nhận đã nộp
+            </button>
+            {/* Nút Rút (Lưu DB) */}
+            <button 
+              onClick={() => handleAction(2)} 
+              style={{ flex: 1, padding: '12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>
+              📤 Rút Quỹ (Admin)
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* CỘT PHẢI: LỊCH SỬ GIAO DỊCH */}
+      {/* CỘT PHẢI: LỊCH SỬ GIAO DỊCH (Giữ nguyên như cũ) */}
       <div style={{ flex: 1, backgroundColor: 'white', padding: '24px', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
         <h3 style={{ marginTop: 0, marginBottom: '20px', color: '#0f172a' }}>Lịch Sử Giao Dịch</h3>
         
-        <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
+        <div style={{ maxHeight: '500px', overflowY: 'auto' }}>
           {transactions.map((item) => (
             <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid #f1f5f9' }}>
               <div>

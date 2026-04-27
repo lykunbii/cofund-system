@@ -12,4 +12,8 @@ public interface ITransactionRepository
     Task<Group?> GetGroupByIdAsync(int groupId);
     Task<decimal> GetGroupTotalAsync(int groupId);
     Task<IEnumerable<Transaction>> GetTransactionsByGroupAsync(int groupId);
+    // Hàm tạo link ảnh QR Code
+    string GeneratePaymentQrUrl(decimal amount, string note);
+    // Hàm tham gia quỹ bằng mã
+    Task<GroupMember> JoinGroupAsync(int userId, string joinCode);
 }

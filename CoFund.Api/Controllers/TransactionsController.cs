@@ -135,4 +135,41 @@ public class TransactionsController : ControllerBase
         string fileName = $"BaoCao_Quy_{group.Name}_{DateTime.Now:ddMMyyyy}.xlsx";
         return File(content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName);
     }
+    [HttpGet("payment-qr")]
+    public IActionResult GetPaymentQr([FromQuery] decimal amount, [FromQuery] string note)
+    {
+        if (amount <= 0)
+        {
+            return BadRequest("Số tiền không hợp lệ.");
+        }
+
+        if (string.IsNullOrEmpty(note))
+        {
+            note = "Nop tien quy"; // Ghi chú mặc định nếu để trống
+        }
+
+        // Gọi Repository để lấy link QR
+        var qrUrl = _repository.GeneratePaymentQrUrl(amount, note);
+        
+        return Ok(new { QrUrl = qrUrl });
+    }
+    [HttpPost("join-group")]
+    public async Task<IActionResult> JoinGroup([FromBody] JoinGroupRequest request)
+    {
+        try
+        {
+            // Chuyển "tờ phiếu đăng ký" xuống cho Repository xử lý
+            var newMember = await _repository.JoinGroupAsync(request.UserId, request.JoinCode);
+            
+            return Ok(new { 
+                Message = "🎉 Tham gia quỹ thành công!", 
+                Member = newMember 
+            });
+        }
+        catch (Exception ex)
+        {
+            // Bắt lỗi (Ví dụ: Mã sai, hoặc đã tham gia rồi) và báo về cho React
+            return BadRequest(new { Error = ex.Message });
+        }
+    }
 }
