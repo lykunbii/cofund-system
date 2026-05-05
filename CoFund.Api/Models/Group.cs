@@ -10,4 +10,5 @@ public class Group
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.Now;
     public string JoinCode { get; set; } = Guid.NewGuid().ToString().Substring(0, 6).ToUpper();
+    public DateTime? EndDate { get; set; }
 }

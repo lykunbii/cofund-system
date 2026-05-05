@@ -1,155 +1,191 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 
-function Transactions({ transactions, refreshData }) {
+function Transactions({ transactions, refreshData, currentUser, currentGroup, myRole }) {
   const [inputAmount, setInputAmount] = useState('');
   const [inputNote, setInputNote] = useState('');
-  
-  // State mới để chứa đường link ảnh QR
   const [qrUrl, setQrUrl] = useState(null); 
+  
+  // STATE MỚI: Quản lý danh mục được chọn
+  const [selectedCategoryId, setSelectedCategoryId] = useState('');
+
+  // Danh sách danh mục mẫu khớp với Backend (Seed Data)
+  const categories = [
+    { id: 1, name: "Đóng quỹ định kỳ", type: 1 },
+    { id: 2, name: "Tiền lãi/Tài trợ", type: 1 },
+    { id: 3, name: "Mua sắm thiết bị", type: 2 },
+    { id: 4, name: "Liên hoan/Sự kiện", type: 2 },
+    { id: 5, name: "Chi phí khác", type: 2 }
+  ];
 
   const TRANSACTIONS_URL = 'http://localhost:5099/api/Transactions';
 
-  // HÀM MỚI: Gọi API để lấy mã QR
   const handleGenerateQR = async () => {
-    if (!inputAmount || inputAmount <= 0) {
-      alert("Vui lòng nhập số tiền hợp lệ để tạo QR!");
-      return;
+    if (!inputAmount || Number(inputAmount) <= 0) {
+      return alert("⚠️ Vui lòng nhập số tiền bạn muốn đóng trước khi lấy mã QR!");
     }
     try {
-      const note = inputNote || "Nop tien quy";
-      // Gọi API GET mà chúng ta vừa viết ở Backend
-      const res = await axios.get(`${TRANSACTIONS_URL}/payment-qr?amount=${inputAmount}&note=${note}`);
+      const res = await axios.get(`${TRANSACTIONS_URL}/payment-qr?amount=${inputAmount}&note=${encodeURIComponent(inputNote || 'NopTienQuy')}`);
       setQrUrl(res.data.qrUrl);
     } catch (err) {
-      alert("Không thể tạo mã QR. Hãy kiểm tra Backend!");
+      alert("Lỗi tạo mã QR");
     }
   };
 
-  // Hàm xử lý lưu giao dịch vào DB
   const handleAction = async (type) => {
-    if (!inputAmount || inputAmount <= 0) {
-      alert("Vui lòng nhập số tiền hợp lệ!");
-      return;
+    if (!inputAmount || Number(inputAmount) <= 0) return alert("Vui lòng nhập số tiền!");
+
+    // Cảnh báo logic: Rút tiền (type 2) mà lại chọn danh mục Thu (type 1) thì nhắc nhở
+    const selectedCat = categories.find(c => c.id === Number(selectedCategoryId));
+    if (selectedCat && selectedCat.type !== type) {
+      const isConfirm = window.confirm("Cảnh báo: Loại giao dịch và Danh mục phân loại không khớp nhau (Ví dụ: Bạn đang bấm Nộp tiền nhưng lại chọn danh mục Chi tiêu). Bạn có chắc chắn muốn tiếp tục?");
+      if (!isConfirm) return;
     }
 
     try {
       const payload = {
-        userId: 1, // Tạm thời hardcode, sau này sẽ lấy từ tài khoản đăng nhập
-        groupId: 1,
+        userId: currentUser.id, 
+        groupId: currentGroup.id,
         amount: Number(inputAmount),
         transactionType: type,
-        note: inputNote || (type === 1 ? "Nộp tiền quỹ" : "Rút tiền quỹ")
+        note: inputNote || (type === 1 ? `Nộp quỹ ${currentGroup.name}` : `Rút quỹ ${currentGroup.name}`),
+        // Gửi thêm ID danh mục xuống Backend
+        categoryId: selectedCategoryId ? Number(selectedCategoryId) : null
       };
 
       await axios.post(TRANSACTIONS_URL, payload);
       
-      // Thành công thì xóa form và ẩn mã QR đi
-      setInputAmount('');
-      setInputNote('');
+      // Xóa trắng form sau khi thành công
+      setInputAmount(''); 
+      setInputNote(''); 
+      setSelectedCategoryId('');
       setQrUrl(null); 
       
       await refreshData(); 
       alert(type === 1 ? "Ghi nhận nộp tiền thành công!" : "Ghi nhận rút tiền thành công!");
     } catch (err) {
-      if (err.response && err.response.data) {
-        alert("Lỗi: " + err.response.data);
-      } else {
-        alert("Có lỗi xảy ra: " + err.message);
-      }
+      alert("Lỗi: " + (err.response?.data || err.message));
     }
   };
 
+  const isAdmin = myRole && myRole.includes('Admin');
+
   return (
-    <div style={{ display: 'flex', gap: '24px', alignItems: 'flex-start' }}>
+    <div style={{ display: 'flex', gap: '24px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
       
-      {/* CỘT TRÁI: FORM NHẬP LIỆU & QR CODE */}
-      <div style={{ flex: 1, backgroundColor: 'white', padding: '24px', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-        <h3 style={{ marginTop: 0, marginBottom: '20px', color: '#0f172a' }}>Tạo Giao Dịch Mới</h3>
+      {/* CỘT TRÁI: FORM NHẬP */}
+      <div style={{ flex: '1 1 350px', backgroundColor: 'white', padding: '24px', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+        <h3 style={{ marginTop: 0, marginBottom: '20px' }}>Tạo Giao Dịch Mới</h3>
         
         <div style={{ marginBottom: '16px' }}>
-          <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#475569', marginBottom: '8px' }}>Số tiền (VNĐ)</label>
+          <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>Số tiền (VNĐ) <span style={{color:'red'}}>*</span></label>
           <input 
             type="number" 
             value={inputAmount}
             onChange={(e) => setInputAmount(e.target.value)}
-            placeholder="Ví dụ: 50000"
-            style={{ width: '100%', padding: '10px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
+            placeholder="Ví dụ: 500000" 
+            style={{ width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
           />
         </div>
 
-        <div style={{ marginBottom: '24px' }}>
-          <label style={{ display: 'block', fontSize: '14px', fontWeight: 'bold', color: '#475569', marginBottom: '8px' }}>Ghi chú</label>
+        {/* Ô CHỌN DANH MỤC (CATEGORY) */}
+        <div style={{ marginBottom: '16px' }}>
+          <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>Phân loại danh mục</label>
+          <select 
+            value={selectedCategoryId} 
+            onChange={(e) => setSelectedCategoryId(e.target.value)}
+            style={{ width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box', backgroundColor: 'white' }}
+          >
+            <option value="">-- Chưa phân loại --</option>
+            <optgroup label="📥 Nhóm Khoản Thu">
+              {categories.filter(c => c.type === 1).map(c => (
+                 <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </optgroup>
+            <optgroup label="📤 Nhóm Khoản Chi">
+              {categories.filter(c => c.type === 2).map(c => (
+                 <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </optgroup>
+          </select>
+        </div>
+
+        <div style={{ marginBottom: '16px' }}>
+          <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>Ghi chú chi tiết</label>
           <input 
             type="text" 
             value={inputNote}
             onChange={(e) => setInputNote(e.target.value)}
-            placeholder="Ví dụ: Tien quy thang 5"
-            style={{ width: '100%', padding: '10px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
+            placeholder="Ví dụ: Đóng quỹ tháng 5" 
+            style={{ width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
           />
         </div>
 
-        {/* --- KHU VỰC HIỂN THỊ MÃ QR --- */}
         {qrUrl && (
-          <div style={{ marginBottom: '20px', textAlign: 'center', padding: '16px', backgroundColor: '#f8fafc', borderRadius: '8px', border: '1px dashed #cbd5e1' }}>
-            <p style={{ margin: '0 0 10px 0', fontSize: '14px', fontWeight: 'bold', color: '#334155' }}>Mã VietQR Thanh Toán</p>
-            <img src={qrUrl} alt="Mã QR Thanh Toán" style={{ width: '200px', height: '200px', borderRadius: '8px' }} />
-            <p style={{ margin: '10px 0 0 0', fontSize: '12px', color: '#64748b' }}>Sử dụng App ngân hàng để quét mã này</p>
+          <div style={{ marginTop: '20px', textAlign: 'center', padding: '16px', backgroundColor: '#f8fafc', borderRadius: '8px', border: '1px dashed #cbd5e1' }}>
+            <p style={{ margin: '0 0 12px 0', fontWeight: 'bold', color: '#0f172a' }}>Quét mã để chuyển khoản</p>
+            <img src={qrUrl} alt="Mã QR Thanh Toán" style={{ width: '200px', height: '200px', objectFit: 'contain' }} />
           </div>
         )}
 
-        {/* CÁC NÚT THAO TÁC */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          
-          {/* Nút Tạo QR */}
-          <button 
-            onClick={handleGenerateQR} 
-            style={{ padding: '12px', backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '20px' }}>
+          <button onClick={handleGenerateQR} style={{ padding: '12px', backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>
             📱 Lấy mã QR Nộp tiền
           </button>
 
           <div style={{ display: 'flex', gap: '12px' }}>
-            {/* Nút Nộp (Lưu DB) */}
-            <button 
-              onClick={() => handleAction(1)} 
-              style={{ flex: 1, padding: '12px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>
-              ✅ Xác nhận đã nộp
+            <button onClick={() => handleAction(1)} style={{ flex: 1, padding: '12px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>
+              ✅ Ghi nhận Thu
             </button>
-            {/* Nút Rút (Lưu DB) */}
-            <button 
-              onClick={() => handleAction(2)} 
-              style={{ flex: 1, padding: '12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>
-              📤 Rút Quỹ (Admin)
-            </button>
+            
+            {isAdmin && (
+              <button onClick={() => handleAction(2)} style={{ flex: 1, padding: '12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>
+                📤 Ghi nhận Chi
+              </button>
+            )}
           </div>
         </div>
       </div>
 
-      {/* CỘT PHẢI: LỊCH SỬ GIAO DỊCH (Giữ nguyên như cũ) */}
-      <div style={{ flex: 1, backgroundColor: 'white', padding: '24px', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-        <h3 style={{ marginTop: 0, marginBottom: '20px', color: '#0f172a' }}>Lịch Sử Giao Dịch</h3>
-        
-        <div style={{ maxHeight: '500px', overflowY: 'auto' }}>
-          {transactions.map((item) => (
-            <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid #f1f5f9' }}>
+      {/* CỘT PHẢI: LỊCH SỬ GIAO DỊCH */}
+      <div style={{ flex: '1 1 450px', backgroundColor: 'white', padding: '24px', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+        <h3 style={{ marginTop: 0, marginBottom: '20px' }}>Lịch Sử Giao Dịch</h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          {transactions.map(t => (
+            <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', border: '1px solid #e2e8f0', borderRadius: '8px', backgroundColor: '#f8fafc' }}>
               <div>
-                <div style={{ fontWeight: '600', color: '#1e293b', fontSize: '14px' }}>{item.userName}</div>
-                <div style={{ fontSize: '13px', color: '#64748b', marginTop: '4px' }}>{item.note}</div>
+                <div style={{ fontWeight: 'bold', color: '#0f172a' }}>
+                  {t.transactionType === 1 ? '📥 Nộp vào' : '📤 Rút ra'} - {t.userName || 'Thành viên'}
+                </div>
+                
+                <div style={{ fontSize: '13px', color: '#64748b', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span>{new Date(t.transactionDate).toLocaleString('vi-VN')}</span>
+                  {/* HIỂN THỊ NHÃN DANH MỤC */}
+                  <span style={{ 
+                    padding: '2px 8px', 
+                    backgroundColor: t.transactionType === 1 ? '#d1fae5' : '#fee2e2', 
+                    color: t.transactionType === 1 ? '#047857' : '#b91c1c', 
+                    borderRadius: '12px', 
+                    fontWeight: 'bold',
+                    fontSize: '11px'
+                  }}>
+                    🏷️ {t.categoryName || 'Chưa phân loại'}
+                  </span>
+                </div>
+
+                <div style={{ fontSize: '14px', color: '#475569', marginTop: '6px', fontStyle: 'italic' }}>
+                  "{t.note}"
+                </div>
               </div>
-              <div style={{ textAlign: 'right' }}>
-                <div style={{ color: item.transactionType === 1 ? '#10b981' : '#ef4444', fontWeight: 'bold' }}>
-                  {item.transactionType === 1 ? '+' : '-'}{item.amount.toLocaleString()}đ
-                </div>
-                <div style={{ fontSize: '12px', color: '#94a3b8', marginTop: '4px' }}>
-                  {new Date(item.transactionDate).toLocaleDateString('vi-VN')}
-                </div>
+              <div style={{ fontWeight: 'bold', fontSize: '16px', color: t.transactionType === 1 ? '#10b981' : '#ef4444' }}>
+                {t.transactionType === 1 ? '+' : '-'}{t.amount.toLocaleString()}đ
               </div>
             </div>
           ))}
-          {transactions.length === 0 && <div style={{ textAlign: 'center', color: '#94a3b8', padding: '20px' }}>Chưa có giao dịch nào</div>}
+          {transactions.length === 0 && <p style={{ color: '#64748b', textAlign: 'center', padding: '20px' }}>Chưa có giao dịch nào.</p>}
         </div>
       </div>
-
+      
     </div>
   );
 }

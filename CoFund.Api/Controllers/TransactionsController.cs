@@ -89,13 +89,15 @@ public class TransactionsController : ControllerBase
         worksheet.Cell(1, 3).Value = "Số Tiền (VNĐ)";
         worksheet.Cell(1, 4).Value = "Ghi Chú";
         worksheet.Cell(1, 5).Value = "Ngày Thực Hiện";
+        worksheet.Cell(1, 6).Value = "Người Thực Hiện"; // Thêm cột Tên người nộp
 
-        var headerRange = worksheet.Range("A1:E1");
+        var headerRange = worksheet.Range("A1:F1");
         headerRange.Style.Font.Bold = true;
         headerRange.Style.Fill.BackgroundColor = XLColor.LightGray;
 
         int row = 2;
-        foreach (var item in transactions)
+        // SỬ DỤNG DYNAMIC ĐỂ FIX LỖI CS1061 CỦA C#
+        foreach (dynamic item in transactions)
         {
             worksheet.Cell(row, 1).Value = item.Id;
             
@@ -114,6 +116,7 @@ public class TransactionsController : ControllerBase
             
             worksheet.Cell(row, 4).Value = item.Note;
             worksheet.Cell(row, 5).Value = item.TransactionDate.ToString("dd/MM/yyyy HH:mm");
+            worksheet.Cell(row, 6).Value = item.UserName; // Xuất luôn tên người nộp ra Excel
             
             row++;
         }
@@ -135,6 +138,7 @@ public class TransactionsController : ControllerBase
         string fileName = $"BaoCao_Quy_{group.Name}_{DateTime.Now:ddMMyyyy}.xlsx";
         return File(content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName);
     }
+
     [HttpGet("payment-qr")]
     public IActionResult GetPaymentQr([FromQuery] decimal amount, [FromQuery] string note)
     {
@@ -145,22 +149,19 @@ public class TransactionsController : ControllerBase
 
         if (string.IsNullOrEmpty(note))
         {
-            note = "Nop tien quy"; // Ghi chú mặc định nếu để trống
+            note = "Nop tien quy"; 
         }
 
-        // Gọi Repository để lấy link QR
         var qrUrl = _repository.GeneratePaymentQrUrl(amount, note);
-        
         return Ok(new { QrUrl = qrUrl });
     }
+
     [HttpPost("join-group")]
     public async Task<IActionResult> JoinGroup([FromBody] JoinGroupRequest request)
     {
         try
         {
-            // Chuyển "tờ phiếu đăng ký" xuống cho Repository xử lý
             var newMember = await _repository.JoinGroupAsync(request.UserId, request.JoinCode);
-            
             return Ok(new { 
                 Message = "🎉 Tham gia quỹ thành công!", 
                 Member = newMember 
@@ -168,8 +169,120 @@ public class TransactionsController : ControllerBase
         }
         catch (Exception ex)
         {
-            // Bắt lỗi (Ví dụ: Mã sai, hoặc đã tham gia rồi) và báo về cho React
             return BadRequest(new { Error = ex.Message });
         }
+    }
+
+    [HttpPost("create-group")]
+    public async Task<IActionResult> CreateGroup([FromBody] CreateGroupRequest request)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(request.Name))
+                return BadRequest("Tên quỹ không được để trống!");
+
+            var newGroup = await _repository.CreateGroupAsync(request);
+            return Ok(new { 
+                Message = "Tạo quỹ thành công!", 
+                Group = newGroup 
+            });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { Error = ex.Message });
+        }
+    }
+
+    [HttpGet("user-groups/{userId}")]
+    public async Task<IActionResult> GetUserGroups(int userId)
+    {
+        try
+        {
+            var groups = await _repository.GetUserGroupsAsync(userId);
+            return Ok(groups);
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { Error = ex.Message });
+        }
+    }
+
+    [HttpGet("group-members/{groupId}")]
+    public async Task<IActionResult> GetGroupMembers(int groupId)
+    {
+        var members = await _repository.GetGroupMembersAsync(groupId);
+        return Ok(members);
+    }
+
+    // ĐÂY LÀ API GIẢI QUYẾT LỖI 404 CỦA BẠN
+    [HttpGet("group/{groupId}")]
+    public async Task<IActionResult> GetTransactionsByGroup(int groupId)
+    {
+        var transactions = await _repository.GetTransactionsByGroupAsync(groupId);
+        return Ok(transactions);
+    }
+    [HttpGet("payment-stats/{groupId}")]
+    public async Task<IActionResult> GetPaymentStats(int groupId)
+    {
+        // Sử dụng _repository để lấy danh sách thành viên (nhớ rằng GetGroupMembersAsync trả về mảng object)
+        var members = await _repository.GetGroupMembersAsync(groupId);
+        
+        // C# LINQ: Đếm số lượng
+        int totalMembers = members.Count();
+        
+        // Vì members là danh sách dynamic/object (chứa IsPaid), ta dùng cách này để đếm an toàn:
+        int paidCount = 0;
+        foreach(dynamic m in members)
+        {
+            if (m.IsPaid == true) paidCount++;
+        }
+        
+        int unpaidCount = totalMembers - paidCount;
+
+        return Ok(new[] {
+            new { Name = "Đã nộp", Value = paidCount, Color = "#10b981" },
+            new { Name = "Chưa nộp", Value = unpaidCount, Color = "#ef4444" }
+        });
+    }
+    // 1. THÊM CLASS NÀY NGAY BÊN TRONG (HOẶC CUỐI) CONTROLLER:
+    public class SendReminderRequest
+    {
+        public int AdminUserId { get; set; }
+        public int TargetUserId { get; set; }
+        public int GroupId { get; set; }
+    }
+
+    // 2. SỬA LẠI API THÀNH NHƯ SAU (Thay thế đoạn cũ):
+    [HttpPost("send-inapp-reminder")]
+    public async Task<IActionResult> SendInAppReminder([FromBody] SendReminderRequest request)
+    {
+        try
+        {
+            // Bây giờ C# đã hiểu chuẩn xác các trường dữ liệu
+            await _repository.SendInAppReminderAsync(request.AdminUserId, request.TargetUserId, request.GroupId);
+            return Ok(new { Message = "Đã gửi thông báo đến thành viên!" });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(403, new { Error = ex.Message }); 
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { Error = ex.Message });
+        }
+    }
+
+    [HttpGet("notifications/{userId}")]
+    public async Task<IActionResult> GetNotifications(int userId)
+    {
+        var notis = await _repository.GetUserNotificationsAsync(userId);
+        return Ok(notis);
+    }
+
+    [HttpPut("notifications/{id}/read")]
+    public async Task<IActionResult> MarkNotificationRead(int id)
+    {
+        await _repository.MarkNotificationAsReadAsync(id);
+        return Ok();
     }
 }

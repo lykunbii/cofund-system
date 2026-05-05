@@ -3,6 +3,7 @@ using System;
 using CoFund.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,62 +11,14 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace CoFund.Api.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260504083941_AddEndDateToGroup")]
+    partial class AddEndDateToGroup
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.7");
-
-            modelBuilder.Entity("CoFund.Api.Models.Category", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("Type")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("Categories");
-
-                    b.HasData(
-                        new
-                        {
-                            Id = 1,
-                            Name = "Đóng quỹ định kỳ",
-                            Type = 1
-                        },
-                        new
-                        {
-                            Id = 2,
-                            Name = "Tiền lãi/Tài trợ",
-                            Type = 1
-                        },
-                        new
-                        {
-                            Id = 3,
-                            Name = "Mua sắm thiết bị",
-                            Type = 2
-                        },
-                        new
-                        {
-                            Id = 4,
-                            Name = "Liên hoan/Sự kiện",
-                            Type = 2
-                        },
-                        new
-                        {
-                            Id = 5,
-                            Name = "Chi phí khác",
-                            Type = 2
-                        });
-                });
 
             modelBuilder.Entity("CoFund.Api.Models.Group", b =>
                 {
@@ -131,34 +84,6 @@ namespace CoFund.Api.Migrations
                     b.ToTable("GroupMembers");
                 });
 
-            modelBuilder.Entity("CoFund.Api.Models.Notification", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<bool>("IsRead")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Message")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Title")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("UserId")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("Notifications");
-                });
-
             modelBuilder.Entity("CoFund.Api.Models.Transaction", b =>
                 {
                     b.Property<int>("Id")
@@ -167,9 +92,6 @@ namespace CoFund.Api.Migrations
 
                     b.Property<decimal>("Amount")
                         .HasColumnType("TEXT");
-
-                    b.Property<int?>("CategoryId")
-                        .HasColumnType("INTEGER");
 
                     b.Property<int>("GroupId")
                         .HasColumnType("INTEGER");

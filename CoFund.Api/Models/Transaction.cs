@@ -1,5 +1,4 @@
 using System.ComponentModel.DataAnnotations;
-
 namespace CoFund.Api.Models;
 public class Transaction
 {
@@ -12,4 +11,5 @@ public class Transaction
     
     // Đảm bảo tên là TransactionDate
     public DateTime TransactionDate { get; set; } = DateTime.Now; 
+    public int? CategoryId { get; set; } // Cho phép null để không lỗi dữ liệu cũ
 }
