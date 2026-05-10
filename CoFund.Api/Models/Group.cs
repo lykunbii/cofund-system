@@ -11,4 +11,7 @@ public class Group
     public DateTime CreatedAt { get; set; } = DateTime.Now;
     public string JoinCode { get; set; } = Guid.NewGuid().ToString().Substring(0, 6).ToUpper();
     public DateTime? EndDate { get; set; }
+    public string? BankBin { get; set; }           // Mã ngân hàng (VD: VCB, MB, ICB)
+    public string? BankAccountNumber { get; set; } // Số tài khoản
+    public string? BankAccountName { get; set; }   // Tên chủ tài khoản
 }

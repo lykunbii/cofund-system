@@ -1,4 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.IdentityModel.Tokens;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
 using Microsoft.EntityFrameworkCore;
 using CoFund.Api.Data;
 using CoFund.Api.Models;
@@ -10,42 +14,77 @@ namespace CoFund.Api.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly ApplicationDbContext _context;
+    private readonly IConfiguration _configuration;
 
-    public AuthController(ApplicationDbContext context)
+    public AuthController(ApplicationDbContext context, IConfiguration configuration)
     {
         _context = context;
+        _configuration = configuration;
     }
 
-    [HttpPost("register")]
-    public async Task<IActionResult> Register([FromBody] RegisterRequest request)
+    public class LoginRequest
     {
-        // Kiểm tra xem email đã tồn tại chưa
-        if (await _context.Users.AnyAsync(u => u.Email == request.Email))
-            return BadRequest("Email này đã được đăng ký trong hệ thống!");
+        public required string Email { get; set; }
+        public required string Password { get; set; }
+    }
 
-        var newUser = new User
-        {
-            FullName = request.FullName,
-            Email = request.Email,
-            Password = request.Password 
-        };
-
-        _context.Users.Add(newUser);
-        await _context.SaveChangesAsync();
-
-        return Ok(new { Message = "Đăng ký thành công!", User = newUser });
+    public class RegisterRequest
+    {
+        public required string FullName { get; set; }
+        public required string Email { get; set; }
+        public required string Password { get; set; }
     }
 
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
-        // Tìm user khớp email và mật khẩu
-        var user = await _context.Users
-            .FirstOrDefaultAsync(u => u.Email == request.Email && u.Password == request.Password);
+        var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.Email && u.Password == request.Password);
+        if (user == null) return BadRequest(new { message = "Email hoặc mật khẩu không chính xác!" });
 
-        if (user == null)
-            return BadRequest("Email hoặc mật khẩu không chính xác!");
+        var claims = new[]
+        {
+            new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
+            new Claim(ClaimTypes.Name, user.FullName),
+            new Claim(ClaimTypes.Email, user.Email)
+        };
 
-        return Ok(new { Message = "Đăng nhập thành công!", User = user });
+        var jwtKey = _configuration["Jwt:Key"] ?? throw new Exception("Thiếu Jwt:Key");
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
+        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+        var token = new JwtSecurityToken(
+            issuer: _configuration["Jwt:Issuer"],
+            audience: _configuration["Jwt:Audience"],
+            claims: claims,
+            expires: DateTime.Now.AddHours(2),
+            signingCredentials: creds
+        );
+
+        // Trả về JSON chữ thường để React dễ lấy
+        return Ok(new
+        {
+            token = new JwtSecurityTokenHandler().WriteToken(token),
+            user = new { id = user.Id, fullName = user.FullName, email = user.Email }
+        });
+    }
+
+    [HttpPost("register")]
+    public async Task<IActionResult> Register([FromBody] RegisterRequest request)
+    {
+        var existingUser = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.Email);
+        if (existingUser != null) return BadRequest(new { message = "Email này đã được sử dụng!" });
+
+        var newUser = new User
+        {
+            FullName = request.FullName,
+            Email = request.Email,
+            Password = request.Password,
+            CreatedAt = DateTime.Now
+        };
+
+        _context.Users.Add(newUser);
+        await _context.SaveChangesAsync();
+
+        return Ok(new { message = "Đăng ký thành công!" });
     }
 }

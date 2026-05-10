@@ -1,19 +1,24 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.SignalR;
 using CoFund.Api.Data;
 using CoFund.Api.Models;
+using CoFund.Api.Hubs;
 
 namespace CoFund.Api.Repositories;
 
 public class TransactionRepository : ITransactionRepository
 {
     private readonly ApplicationDbContext _context;
+    // 1. KHAI BÁO BIẾN ĐỂ GỌI SIGNALR
+    private readonly IHubContext<NotificationHub> _hubContext; 
 
-    public TransactionRepository(ApplicationDbContext context)
+    // 2. TIÊM SIGNALR VÀO CONSTRUCTOR
+    public TransactionRepository(ApplicationDbContext context, IHubContext<NotificationHub> hubContext)
     {
         _context = context;
+        _hubContext = hubContext;
     }
 
-    // 1. Lấy tất cả giao dịch (Đã fix lỗi hardcode tên)
     public async Task<IEnumerable<object>> GetAllTransactionsAsync()
     {
         return await _context.Transactions
@@ -26,75 +31,94 @@ public class TransactionRepository : ITransactionRepository
                       t.Note,
                       t.TransactionDate,
                       t.TransactionType,
+                      t.Status, // MỚI THÊM: Để xuất hiện trạng thái duyệt
                       UserName = u.FullName 
                   })
             .OrderByDescending(t => t.TransactionDate)
             .ToListAsync();
     }
 
-    // 2. Thêm giao dịch & TỰ ĐỘNG THÔNG BÁO
     public async Task<Transaction> AddTransactionAsync(Transaction transaction)
     {
-        var group = await _context.Groups.FindAsync(transaction.GroupId);
-        if (group == null) throw new Exception("Không tìm thấy thông tin quỹ!");
-
-        // Xử lý cộng/trừ tiền quỹ
-        if (transaction.TransactionType == 1) 
+        // BẮT ĐẦU GIAO DỊCH (TRANSACTION)
+        // Mở một "hộp an toàn", mọi thay đổi từ giờ trở đi chỉ mang tính tạm thời
+        await using var dbTransaction = await _context.Database.BeginTransactionAsync();
+        
+        try
         {
-            group.CurrentBalance += transaction.Amount;
-        }
-        else if (transaction.TransactionType == 2)
-        {
-            if (group.CurrentBalance < transaction.Amount)
-                throw new Exception("Số dư quỹ không đủ để thực hiện khoản chi này!");
-            
-            group.CurrentBalance -= transaction.Amount;
-        }
-        else
-        {
-            throw new Exception("Loại giao dịch không hợp lệ!");
-        }
+            var group = await _context.Groups.FindAsync(transaction.GroupId);
+            if (group == null) throw new Exception("Không tìm thấy thông tin quỹ!");
 
-        transaction.TransactionDate = DateTime.Now;
-        _context.Transactions.Add(transaction);
-        await _context.SaveChangesAsync(); // Lưu giao dịch trước để lấy ID (nếu cần)
-
-        // --- LOGIC TỰ ĐỘNG THÔNG BÁO ---
-        var user = await _context.Users.FindAsync(transaction.UserId);
-        string actionText = transaction.TransactionType == 1 ? "nộp vào" : "rút ra";
-        string amountText = transaction.Amount.ToString("#,##0"); 
-
-        // Tìm các thành viên khác trong quỹ (trừ người thực hiện giao dịch)
-        var otherMembers = await _context.GroupMembers
-            .Where(gm => gm.GroupId == transaction.GroupId && gm.UserId != transaction.UserId)
-            .ToListAsync();
-
-        if (otherMembers.Any())
-        {
-            var notifications = otherMembers.Select(m => new Notification
+            // [ĐÃ SỬA] Tước quyền cộng/trừ tiền trực tiếp ở đây để áp dụng Luồng Phê Duyệt
+            if (transaction.TransactionType != 1 && transaction.TransactionType != 2)
             {
-                UserId = m.UserId,
-                Title = $"Biến động số dư: {group.Name}",
-                Message = $"{user?.FullName ?? "Một thành viên"} vừa {actionText} {amountText}đ. Lý do: {transaction.Note}",
-                CreatedAt = DateTime.Now,
-                IsRead = false
-            });
+                throw new Exception("Loại giao dịch không hợp lệ!");
+            }
 
-            _context.Notifications.AddRange(notifications);
-            await _context.SaveChangesAsync(); // Lưu danh sách thông báo
+            transaction.TransactionDate = DateTime.Now;
+            transaction.Status = 0; // Đưa vào trạng thái Chờ duyệt
+            _context.Transactions.Add(transaction);
+            
+            // Cố tình GỌI LƯU TẠM THỜI để lấy ID của transaction (nếu cần)
+            await _context.SaveChangesAsync(); 
+
+            // 2. Xử lý logic tạo thông báo
+            var user = await _context.Users.FindAsync(transaction.UserId);
+            string actionText = transaction.TransactionType == 1 ? "nộp vào" : "rút ra";
+            string amountText = transaction.Amount.ToString("#,##0"); 
+
+            var otherMembers = await _context.GroupMembers
+                .Where(gm => gm.GroupId == transaction.GroupId && gm.UserId != transaction.UserId)
+                .ToListAsync();
+
+            if (otherMembers.Any())
+            {
+                var notifications = otherMembers.Select(m => new Notification
+                {
+                    UserId = m.UserId,
+                    Title = $"Biến động số dư: {group.Name}",
+                    // Cập nhật câu chữ một chút cho hợp lý với việc "Gửi yêu cầu"
+                    Message = $"{user?.FullName ?? "Một thành viên"} vừa gửi yêu cầu {actionText} {amountText}đ. Lý do: {transaction.Note}",
+                    CreatedAt = DateTime.Now,
+                    IsRead = false
+                });
+
+                _context.Notifications.AddRange(notifications);
+                await _context.SaveChangesAsync(); 
+            }
+
+            // 3. CHỐT GIAO DỊCH (COMMIT)
+            // Nếu code chạy mượt mà đến đây không có lỗi, ta mới chính thức ghi toàn bộ xuống Database vật lý
+            await dbTransaction.CommitAsync();
+
+            // 4. Báo hiệu Real-time cho Frontend (Chỉ phát thông báo khi DB đã ghi thành công)
+            if (otherMembers.Any())
+            {
+                await _hubContext.Clients.All.SendAsync("ReceiveNotification");
+            }
+
+            return transaction;
         }
-
-        return transaction;
+        catch (Exception ex)
+        {
+            // QUAY XE (ROLLBACK)
+            // Nếu có BẤT KỲ lỗi gì xảy ra (ví dụ: mất kết nối DB ở bước 2), 
+            // nó sẽ nhảy vào đây và HỦY BỎ toàn bộ các lệnh _context.SaveChangesAsync() trước đó.
+            // Tiền trong quỹ sẽ tự động trả về như cũ.
+            await dbTransaction.RollbackAsync();
+            
+            // Báo lỗi ra ngoài
+            throw new Exception($"Giao dịch thất bại, hệ thống đã hoàn tác: {ex.Message}");
+        }
     }
     
-    // 3. Lấy giao dịch theo quỹ (Đã dùng GroupJoin để Left Join Category)
     public async Task<IEnumerable<object>> GetTransactionsByGroupAsync(int groupId)
     {
         return await _context.Transactions
             .Where(t => t.GroupId == groupId)
             .Join(_context.Users, t => t.UserId, u => u.Id, (t, u) => new { t, u })
-            // Sử dụng GroupJoin và SelectMany để thực hiện LEFT JOIN với Category
-            .GroupJoin(_context.Categories, x => x.t.CategoryId, c => c.Id, (x, c) => new { x.t, x.u, c })
+            // [ĐÃ FIX LỖI ĐỎ] Ép kiểu (int?) cho c.Id để Entity Framework không cãi nhau về kiểu dữ liệu
+            .GroupJoin(_context.Categories, x => x.t.CategoryId, c => (int?)c.Id, (x, c) => new { x.t, x.u, c })
             .SelectMany(x => x.c.DefaultIfEmpty(), (x, c) => new {
                 x.t.Id,
                 x.t.UserId,
@@ -104,7 +128,8 @@ public class TransactionRepository : ITransactionRepository
                 x.t.Amount,
                 x.t.TransactionType,
                 x.t.TransactionDate,
-                x.t.Note
+                x.t.Note,
+                x.t.Status // [MỚI THÊM] Để React đọc được trạng thái Vàng/Xanh/Đỏ
             })
             .OrderByDescending(t => t.TransactionDate) 
             .ToListAsync();
@@ -122,18 +147,16 @@ public class TransactionRepository : ITransactionRepository
             .SumAsync(t => t.Amount);
     }
 
-    // 4. Tạo QR Code VietQR
     public string GeneratePaymentQrUrl(decimal amount, string note)
     {
-        string bankId = "MB"; // Mã ngân hàng
-        string accountNo = "0123456789"; // STK
-        string accountName = "NGUYEN THI LY"; // Tên chủ thẻ không dấu
+        string bankId = "MB"; 
+        string accountNo = "0123456789"; 
+        string accountName = "NGUYEN THI LY"; 
         
         string encodedNote = Uri.EscapeDataString(note);
         return $"https://img.vietqr.io/image/{bankId}-{accountNo}-compact2.png?amount={amount}&addInfo={encodedNote}&accountName={accountName}";
     }
 
-    // 5. Tham gia quỹ
     public async Task<GroupMember> JoinGroupAsync(int userId, string joinCode)
     {
         var group = await _context.Groups.FirstOrDefaultAsync(g => g.JoinCode == joinCode);
@@ -144,7 +167,7 @@ public class TransactionRepository : ITransactionRepository
             .AnyAsync(gm => gm.GroupId == group.Id && gm.UserId == userId);
             
         if (isExist) 
-            throw new Exception("Bạn đã là thành viên của quỹ này rồi, không cần tham gia lại!");
+            throw new Exception("Bạn đã là thành viên của quỹ này rồi!");
 
         var newMember = new GroupMember
         {
@@ -160,7 +183,6 @@ public class TransactionRepository : ITransactionRepository
         return newMember;
     }
 
-    // 6. Tạo quỹ mới
     public async Task<Group> CreateGroupAsync(CreateGroupRequest request)
     {
         var newGroup = new Group
@@ -215,20 +237,14 @@ public class TransactionRepository : ITransactionRepository
             .ToListAsync();
     }
 
-    // ==========================================
-    // NHÓM TÍNH NĂNG THÔNG BÁO (NOTIFICATIONS)
-    // ==========================================
-
     public async Task SendInAppReminderAsync(int adminUserId, int targetUserId, int groupId)
     {
-        // Kiểm tra quyền Admin
         var adminCheck = await _context.GroupMembers
             .FirstOrDefaultAsync(gm => gm.GroupId == groupId && gm.UserId == adminUserId);
             
         if (adminCheck == null || !adminCheck.Role.Contains("Admin"))
             throw new UnauthorizedAccessException("Bảo mật: Chỉ Quản trị viên của quỹ mới được phép gửi nhắc nhở!");
 
-        // Kiểm tra target có tồn tại trong quỹ không
         var targetCheck = await _context.GroupMembers
             .FirstOrDefaultAsync(gm => gm.GroupId == groupId && gm.UserId == targetUserId);
             
@@ -248,6 +264,9 @@ public class TransactionRepository : ITransactionRepository
 
         _context.Notifications.Add(notification);
         await _context.SaveChangesAsync();
+        
+        // 4. PHÁT SÓNG SIGNALR ĐẾN TOÀN BỘ CLIENT ĐANG ONLINE
+        await _hubContext.Clients.All.SendAsync("ReceiveNotification");
     }
 
     public async Task<IEnumerable<Notification>> GetUserNotificationsAsync(int userId)

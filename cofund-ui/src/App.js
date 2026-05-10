@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from './services/api'; // ĐÃ SỬA: Dùng máy kẹp thẻ tự động thay cho axios gốc
 
 // Import Layout và các trang (Pages)
 import MainLayout from './layouts/MainLayout';
@@ -20,8 +20,30 @@ function App() {
   const [goalData, setGoalData] = useState(null);
   const [transactions, setTransactions] = useState([]);
   const [groupMembers, setGroupMembers] = useState([]);
-  const [myRole, setMyRole] = useState('Member'); // Mặc định là Member
+  const [myRole, setMyRole] = useState('Member'); 
   const [loading, setLoading] = useState(false);
+
+  // ==========================================
+  // [MỚI] TỰ ĐỘNG KHÔI PHỤC ĐĂNG NHẬP KHI F5 TRANG
+  // ==========================================
+  useEffect(() => {
+    const savedUser = localStorage.getItem('user');
+    const savedToken = localStorage.getItem('token');
+    
+    if (savedUser && savedToken) {
+      setCurrentUser(JSON.parse(savedUser));
+    }
+  }, []);
+
+  // ==========================================
+  // [MỚI] HÀM XỬ LÝ ĐĂNG XUẤT
+  // ==========================================
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    setCurrentUser(null);
+    setCurrentGroup(null);
+  };
 
   // 3. HÀM TẢI DỮ LIỆU: Chỉ chạy khi người dùng đã CHỌN ĐƯỢC NHÓM
   const fetchGroupData = async () => {
@@ -29,21 +51,17 @@ function App() {
     
     setLoading(true);
     try {
-      // Gọi cả 3 API cùng lúc để tối ưu thời gian chờ
+      // ĐÃ SỬA: Dùng `api.get` và bỏ chuỗi `http://localhost:5099/api` đi
       const [resProgress, resHistory, resMembers] = await Promise.all([
-        axios.get(`http://localhost:5099/api/Transactions/goal-progress/${currentGroup.id}`),
-        
-        // 🌟 GỌI ĐÚNG API LỌC THEO NHÓM MÀ CHÚNG TA VỪA VIẾT
-        axios.get(`http://localhost:5099/api/Transactions/group/${currentGroup.id}`), 
-        
-        axios.get(`http://localhost:5099/api/Transactions/group-members/${currentGroup.id}`)
+        api.get(`/Transactions/goal-progress/${currentGroup.id}`),
+        api.get(`/Transactions/group/${currentGroup.id}`), 
+        api.get(`/Transactions/group-members/${currentGroup.id}`)
       ]);
       
       setGoalData(resProgress.data);
       setTransactions(resHistory.data);
       setGroupMembers(resMembers.data);
 
-      // Tìm xem user đang đăng nhập có quyền gì trong danh sách thành viên trả về
       const me = resMembers.data.find(m => m.userId === currentUser.id);
       if (me) {
         setMyRole(me.role);
@@ -56,7 +74,6 @@ function App() {
     }
   };
 
-  // Tự động tải lại dữ liệu mỗi khi biến `currentGroup` thay đổi (VD: Vừa click chọn quỹ)
   useEffect(() => {
     if (currentGroup) {
       fetchGroupData();
@@ -78,6 +95,7 @@ function App() {
       <Welcome 
         currentUser={currentUser} 
         onJoinSuccess={(group) => setCurrentGroup(group)} 
+        onLogout={handleLogout} // TRUYỀN HÀM ĐĂNG XUẤT VÀO SẢNH CHỜ
       />
     );
   }
@@ -99,32 +117,32 @@ function App() {
       activeTab={activeTab} 
       setActiveTab={setActiveTab} 
       currentUser={currentUser}
-      onBackToLobby={() => setCurrentGroup(null)} // Lệnh xóa Group để văng ra Sảnh
+      onBackToLobby={() => setCurrentGroup(null)} 
+      onLogout={handleLogout} // TRUYỀN HÀM ĐĂNG XUẤT VÀO MAIN LAYOUT
     >
       
-      {activeTab === 'dashboard' && <Dashboard goalData={goalData} />}
+      {activeTab === 'dashboard' && <Dashboard goalData={goalData} currentGroup={currentGroup} />}
       
       {activeTab === 'transactions' && (
         <Transactions 
           transactions={transactions} 
           refreshData={fetchGroupData} 
-          currentUser={currentUser}       // Truyền User thật xuống
-          currentGroup={currentGroup}     // Truyền Group thật xuống
-          myRole={myRole}                 // Truyền Quyền xuống để ẩn/hiện nút Rút quỹ
+          currentUser={currentUser}       
+          currentGroup={currentGroup}     
+          myRole={myRole}                 
         />
       )}
 
       {activeTab === 'members' && (
         <Members 
-          members={groupMembers}          // Truyền danh sách thành viên thật
-          myRole={myRole}                 // Truyền Quyền xuống để ẩn/hiện nút Admin
-          currentUser={currentUser}       // Để file Members nhận diện được "Ai là Bạn"
+          members={groupMembers}          
+          myRole={myRole}                 
+          currentUser={currentUser}       
         />
       )}
       
       {activeTab === 'reports' && <Reports currentGroup={currentGroup} />}
   
-
     </MainLayout>
   );
 }

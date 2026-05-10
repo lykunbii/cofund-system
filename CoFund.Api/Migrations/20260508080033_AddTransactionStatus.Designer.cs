@@ -11,8 +11,8 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace CoFund.Api.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20260427152031_AddUsersAndGroupMembers")]
-    partial class AddUsersAndGroupMembers
+    [Migration("20260508080033_AddTransactionStatus")]
+    partial class AddTransactionStatus
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -20,11 +20,70 @@ namespace CoFund.Api.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.7");
 
+            modelBuilder.Entity("CoFund.Api.Models.Category", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("Categories");
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1,
+                            Name = "Đóng quỹ định kỳ",
+                            Type = 1
+                        },
+                        new
+                        {
+                            Id = 2,
+                            Name = "Tiền lãi/Tài trợ",
+                            Type = 1
+                        },
+                        new
+                        {
+                            Id = 3,
+                            Name = "Mua sắm thiết bị",
+                            Type = 2
+                        },
+                        new
+                        {
+                            Id = 4,
+                            Name = "Liên hoan/Sự kiện",
+                            Type = 2
+                        },
+                        new
+                        {
+                            Id = 5,
+                            Name = "Chi phí khác",
+                            Type = 2
+                        });
+                });
+
             modelBuilder.Entity("CoFund.Api.Models.Group", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("BankAccountName")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BankAccountNumber")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BankBin")
+                        .HasColumnType("TEXT");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
@@ -35,8 +94,15 @@ namespace CoFund.Api.Migrations
                     b.Property<string>("Description")
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTime?>("EndDate")
+                        .HasColumnType("TEXT");
+
                     b.Property<bool>("IsActive")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("JoinCode")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -77,6 +143,34 @@ namespace CoFund.Api.Migrations
                     b.ToTable("GroupMembers");
                 });
 
+            modelBuilder.Entity("CoFund.Api.Models.Notification", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsRead")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("Notifications");
+                });
+
             modelBuilder.Entity("CoFund.Api.Models.Transaction", b =>
                 {
                     b.Property<int>("Id")
@@ -86,11 +180,17 @@ namespace CoFund.Api.Migrations
                     b.Property<decimal>("Amount")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("CategoryId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("GroupId")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("Note")
                         .HasColumnType("TEXT");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
 
                     b.Property<DateTime>("TransactionDate")
                         .HasColumnType("TEXT");

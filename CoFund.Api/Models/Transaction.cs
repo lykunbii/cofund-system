@@ -12,4 +12,7 @@ public class Transaction
     // Đảm bảo tên là TransactionDate
     public DateTime TransactionDate { get; set; } = DateTime.Now; 
     public int? CategoryId { get; set; } // Cho phép null để không lỗi dữ liệu cũ
+    // Thêm dòng này vào class Transaction của bạn
+// 0: Chờ duyệt (Pending) | 1: Đã duyệt (Approved) | 2: Từ chối (Rejected)
+    public int Status { get; set; } = 0;
 }

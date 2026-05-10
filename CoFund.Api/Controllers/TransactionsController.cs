@@ -1,20 +1,26 @@
 using Microsoft.AspNetCore.Mvc;
 using CoFund.Api.Models;
 using CoFund.Api.Repositories;
+using CoFund.Api.Data; // THÊM DÒNG NÀY ĐỂ NHẬN DIỆN DATABASE CONTEXT
 using ClosedXML.Excel;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
 
 namespace CoFund.Api.Controllers;
 
 [Route("api/[controller]")]
 [ApiController]
+[Authorize]
 public class TransactionsController : ControllerBase
 {
-    // CỘT SỐNG DUY NHẤT: REPOSITORY
     private readonly ITransactionRepository _repository; 
+    private readonly ApplicationDbContext _context; // ĐÃ FIX: Khai báo _context
 
-    public TransactionsController(ITransactionRepository repository)
+    // ĐÃ FIX: Tiêm ApplicationDbContext vào Constructor
+    public TransactionsController(ITransactionRepository repository, ApplicationDbContext context) 
     {
         _repository = repository;
+        _context = context;
     }
 
     [HttpGet]
@@ -24,18 +30,52 @@ public class TransactionsController : ControllerBase
         return Ok(transactions);
     }
 
+    // 🌟 ĐÃ SỬA: Thêm logic Chờ duyệt (Status = 0)
     [HttpPost]
     public async Task<ActionResult<Transaction>> PostTransaction(Transaction transaction)
     {
         try
         {
+            // Giao dịch mới tạo mặc định trạng thái là 0 (Pending)
+            transaction.Status = 0;
+            transaction.TransactionDate = DateTime.Now;
+
             var newTransaction = await _repository.AddTransactionAsync(transaction);
-            return CreatedAtAction(nameof(GetTransactions), new { id = newTransaction.Id }, newTransaction);
+            
+            // Trả về JSON có message để Frontend hiện thông báo
+            return Ok(new { 
+                Message = "Đã gửi yêu cầu giao dịch, vui lòng chờ Admin duyệt!", 
+                Transaction = newTransaction 
+            });
         }
         catch (Exception ex)
         {
-            return BadRequest(ex.Message);
+            return BadRequest(new { message = ex.Message });
         }
+    }
+
+    // 🌟 MỚI: Thêm API Phê duyệt giao dịch dành cho Admin
+    [HttpPut("{id}/approve")]
+    public async Task<IActionResult> ApproveTransaction(int id, [FromQuery] int status) 
+    {
+        var tx = await _context.Transactions.FirstOrDefaultAsync(t => t.Id == id);
+        if (tx == null) return NotFound(new { message = "Không tìm thấy giao dịch!" });
+        if (tx.Status != 0) return BadRequest(new { message = "Giao dịch này đã được xử lý trước đó." });
+
+        tx.Status = status; // 1: Duyệt, 2: Từ chối
+
+        if (status == 1) // Nếu duyệt mới cập nhật tiền vào quỹ
+        {
+            var group = await _context.Groups.FindAsync(tx.GroupId);
+            if (group != null)
+            {
+                if (tx.TransactionType == 1) group.CurrentBalance += tx.Amount;
+                else group.CurrentBalance -= tx.Amount;
+            }
+        }
+
+        await _context.SaveChangesAsync();
+        return Ok(new { message = status == 1 ? "✅ Đã duyệt và cập nhật số dư" : "❌ Đã từ chối giao dịch" });
     }
 
     [HttpGet("group-total/{groupId}")]
@@ -74,13 +114,11 @@ public class TransactionsController : ControllerBase
     [HttpGet("export/{groupId}")]
     public async Task<IActionResult> ExportToExcel(int groupId)
     {
-        // 1. Lấy dữ liệu thông qua Repository (Không chạm vào DbContext)
         var group = await _repository.GetGroupByIdAsync(groupId);
         if (group == null) return NotFound("Không tìm thấy quỹ");
 
         var transactions = await _repository.GetTransactionsByGroupAsync(groupId);
 
-        // 2. Logic tạo Excel
         using var workbook = new XLWorkbook();
         var worksheet = workbook.Worksheets.Add("Bao_Cao_Thu_Chi");
 
@@ -89,14 +127,13 @@ public class TransactionsController : ControllerBase
         worksheet.Cell(1, 3).Value = "Số Tiền (VNĐ)";
         worksheet.Cell(1, 4).Value = "Ghi Chú";
         worksheet.Cell(1, 5).Value = "Ngày Thực Hiện";
-        worksheet.Cell(1, 6).Value = "Người Thực Hiện"; // Thêm cột Tên người nộp
+        worksheet.Cell(1, 6).Value = "Người Thực Hiện"; 
 
         var headerRange = worksheet.Range("A1:F1");
         headerRange.Style.Font.Bold = true;
         headerRange.Style.Fill.BackgroundColor = XLColor.LightGray;
 
         int row = 2;
-        // SỬ DỤNG DYNAMIC ĐỂ FIX LỖI CS1061 CỦA C#
         foreach (dynamic item in transactions)
         {
             worksheet.Cell(row, 1).Value = item.Id;
@@ -116,7 +153,7 @@ public class TransactionsController : ControllerBase
             
             worksheet.Cell(row, 4).Value = item.Note;
             worksheet.Cell(row, 5).Value = item.TransactionDate.ToString("dd/MM/yyyy HH:mm");
-            worksheet.Cell(row, 6).Value = item.UserName; // Xuất luôn tên người nộp ra Excel
+            worksheet.Cell(row, 6).Value = item.UserName; 
             
             row++;
         }
@@ -139,23 +176,7 @@ public class TransactionsController : ControllerBase
         return File(content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName);
     }
 
-    [HttpGet("payment-qr")]
-    public IActionResult GetPaymentQr([FromQuery] decimal amount, [FromQuery] string note)
-    {
-        if (amount <= 0)
-        {
-            return BadRequest("Số tiền không hợp lệ.");
-        }
-
-        if (string.IsNullOrEmpty(note))
-        {
-            note = "Nop tien quy"; 
-        }
-
-        var qrUrl = _repository.GeneratePaymentQrUrl(amount, note);
-        return Ok(new { QrUrl = qrUrl });
-    }
-
+    
     [HttpPost("join-group")]
     public async Task<IActionResult> JoinGroup([FromBody] JoinGroupRequest request)
     {
@@ -214,23 +235,19 @@ public class TransactionsController : ControllerBase
         return Ok(members);
     }
 
-    // ĐÂY LÀ API GIẢI QUYẾT LỖI 404 CỦA BẠN
     [HttpGet("group/{groupId}")]
     public async Task<IActionResult> GetTransactionsByGroup(int groupId)
     {
         var transactions = await _repository.GetTransactionsByGroupAsync(groupId);
         return Ok(transactions);
     }
+
     [HttpGet("payment-stats/{groupId}")]
     public async Task<IActionResult> GetPaymentStats(int groupId)
     {
-        // Sử dụng _repository để lấy danh sách thành viên (nhớ rằng GetGroupMembersAsync trả về mảng object)
         var members = await _repository.GetGroupMembersAsync(groupId);
         
-        // C# LINQ: Đếm số lượng
         int totalMembers = members.Count();
-        
-        // Vì members là danh sách dynamic/object (chứa IsPaid), ta dùng cách này để đếm an toàn:
         int paidCount = 0;
         foreach(dynamic m in members)
         {
@@ -244,7 +261,7 @@ public class TransactionsController : ControllerBase
             new { Name = "Chưa nộp", Value = unpaidCount, Color = "#ef4444" }
         });
     }
-    // 1. THÊM CLASS NÀY NGAY BÊN TRONG (HOẶC CUỐI) CONTROLLER:
+
     public class SendReminderRequest
     {
         public int AdminUserId { get; set; }
@@ -252,13 +269,11 @@ public class TransactionsController : ControllerBase
         public int GroupId { get; set; }
     }
 
-    // 2. SỬA LẠI API THÀNH NHƯ SAU (Thay thế đoạn cũ):
     [HttpPost("send-inapp-reminder")]
     public async Task<IActionResult> SendInAppReminder([FromBody] SendReminderRequest request)
     {
         try
         {
-            // Bây giờ C# đã hiểu chuẩn xác các trường dữ liệu
             await _repository.SendInAppReminderAsync(request.AdminUserId, request.TargetUserId, request.GroupId);
             return Ok(new { Message = "Đã gửi thông báo đến thành viên!" });
         }
@@ -284,5 +299,127 @@ public class TransactionsController : ControllerBase
     {
         await _repository.MarkNotificationAsReadAsync(id);
         return Ok();
+    }
+
+    public class BankInfoRequest
+    {
+        public required string BankBin { get; set; }
+        public required string BankAccountNumber { get; set; }
+        public required string BankAccountName { get; set; }
+    }
+
+    // API cho Admin Cấu hình Ngân hàng
+    [HttpPut("group/{groupId}/bank-info")]
+    public async Task<IActionResult> UpdateBankInfo(int groupId, [FromBody] BankInfoRequest request)
+    {
+        var group = await _context.Groups.FindAsync(groupId);
+        if (group == null) return NotFound("Không tìm thấy quỹ!");
+
+        group.BankBin = request.BankBin;
+        group.BankAccountNumber = request.BankAccountNumber;
+        group.BankAccountName = request.BankAccountName.ToUpper(); 
+
+        await _context.SaveChangesAsync();
+        return Ok(new { message = "Cập nhật tài khoản nhận tiền thành công!", group });
+    }
+
+    // API sinh mã QR động cho Member
+    [HttpGet("payment-qr/{groupId}")]
+    public async Task<IActionResult> GetPaymentQR(int groupId, [FromQuery] decimal amount, [FromQuery] string note)
+    {
+        var group = await _context.Groups.FindAsync(groupId);
+        if (group == null) return NotFound("Không tìm thấy quỹ!");
+
+        if (string.IsNullOrEmpty(group.BankAccountNumber) || string.IsNullOrEmpty(group.BankBin))
+        {
+            return BadRequest(new { message = "Thủ quỹ chưa cấu hình Tài khoản Ngân hàng nhận tiền. Vui lòng liên hệ Admin!" });
+        }
+
+        string cleanNote = Uri.EscapeDataString(note ?? $"Nop quy {group.Name}");
+        string cleanName = Uri.EscapeDataString(group.BankAccountName ?? "");
+        
+        string qrUrl = $"https://img.vietqr.io/image/{group.BankBin}-{group.BankAccountNumber}-compact2.png?amount={amount}&addInfo={cleanNote}&accountName={cleanName}";
+
+        return Ok(new { qrUrl });
+    }
+    // ==========================================
+    // 🤖 CHATBOT AI: CỐ VẤN TÀI CHÍNH TƯƠNG TÁC
+    // ==========================================
+    public class ChatRequest { 
+        public string Message { get; set; } = string.Empty;
+        // Bạn có thể mở rộng thêm mảng History nếu muốn chatbot nhớ câu trước
+    }
+
+    [HttpPost("ai-chat/{groupId}")]
+    public async Task<IActionResult> FinanceChat(int groupId, [FromBody] ChatRequest request, [FromServices] IConfiguration config)
+    {
+        var group = await _context.Groups.FindAsync(groupId);
+        if (group == null) return NotFound("Quỹ không tồn tại.");
+
+        // 1. Lấy dữ liệu thực tế làm "vũ khí" cho AI
+        var txs = await _context.Transactions
+            .Where(t => t.GroupId == groupId && t.Status == 1)
+            .OrderByDescending(t => t.TransactionDate)
+            .Take(20) // Lấy 20 giao dịch gần nhất
+            .ToListAsync();
+
+        string historyData = string.Join("\n", txs.Select(t => 
+            $"- {(t.TransactionType == 1 ? "Thu" : "Chi")}: {t.Amount:N0}đ | Nội dung: {t.Note} | Ngày: {t.TransactionDate:dd/MM}"));
+
+        // 2. Thiết lập "Nhân cách" cho AI (System Prompt)
+        string systemInstruction = $@"
+            Bạn là 'CoFund Bot' - Cố vấn tài chính thông minh cho quỹ nhóm '{group.Name}'.
+            DỮ LIỆU HIỆN TẠI:
+            - Số dư: {group.CurrentBalance:N0}đ
+            - Mục tiêu: {group.TargetAmount:N0}đ
+            - Lịch sử gần đây:
+            {historyData}
+
+            NHIỆM VỤ:
+            - Trả lời các câu hỏi của người dùng dựa trên dữ liệu trên.
+            - Tư vấn cách chi tiêu hợp lý, cảnh báo nếu chi tiêu quá đà.
+            - Trả lời ngắn gọn, thân thiện, dùng icon phù hợp. 
+            - Trả lời bằng tiếng Việt. Dùng định dạng HTML (<b>, <br>) để trình bày.
+        ";
+
+        // 3. Gọi Gemini API
+        var apiKey = config["GeminiApiKey"];
+        using var client = new HttpClient();
+        var requestBody = new {
+            contents = new[] { 
+                new { role = "user", parts = new[] { new { text = $"{systemInstruction}\n\nNgười dùng hỏi: {request.Message}" } } } 
+            }
+        };
+
+        var response = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={apiKey}", requestBody);
+        
+        // --- BẮT ĐẦU ĐOẠN LOG ĐIỀU TRA HIỆN TRƯỜNG ---
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorContent = await response.Content.ReadAsStringAsync();
+            Console.WriteLine("\n=========================================");
+            Console.WriteLine($"[LỖI TỪ GOOGLE GEMINI]: {response.StatusCode}");
+            Console.WriteLine(errorContent);
+            Console.WriteLine("=========================================\n");
+            return BadRequest(new { Reply = $"Lỗi từ Google: {response.StatusCode} - {errorContent}" });
+        }
+
+        // 1. Đọc dữ liệu trả về dưới dạng chuỗi Text thô
+        var jsonString = await response.Content.ReadAsStringAsync();
+        
+        Console.WriteLine("\n=========================================");
+        Console.WriteLine("[PHẢN HỒI THÀNH CÔNG TỪ GOOGLE]:");
+        Console.WriteLine(jsonString);
+        Console.WriteLine("=========================================\n");
+        // --- KẾT THÚC ĐOẠN LOG ĐIỀU TRA ---
+
+        // 2. Dùng JsonNode để bóc tách dữ liệu an toàn
+        var jsonNode = System.Text.Json.Nodes.JsonNode.Parse(jsonString);
+        
+        // 3. Lấy text ra (Dùng dấu ? để tránh lỗi sập server nếu thiếu trường)
+        string reply = jsonNode?["candidates"]?[0]?["content"]?["parts"]?[0]?["text"]?.ToString() 
+                       ?? "Hệ thống AI không trả về câu trả lời hợp lệ.";
+
+        return Ok(new { Reply = reply });
     }
 }

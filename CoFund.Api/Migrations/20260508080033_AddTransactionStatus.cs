@@ -5,25 +5,25 @@
 namespace CoFund.Api.Migrations
 {
     /// <inheritdoc />
-    public partial class AddJoinCodeToGroup : Migration
+    public partial class AddTransactionStatus : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.AddColumn<string>(
-                name: "JoinCode",
-                table: "Groups",
-                type: "TEXT",
+            migrationBuilder.AddColumn<int>(
+                name: "Status",
+                table: "Transactions",
+                type: "INTEGER",
                 nullable: false,
-                defaultValue: "");
+                defaultValue: 0);
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropColumn(
-                name: "JoinCode",
-                table: "Groups");
+                name: "Status",
+                table: "Transactions");
         }
     }
 }
