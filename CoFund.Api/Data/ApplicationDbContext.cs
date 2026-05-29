@@ -102,6 +102,7 @@ public class ApplicationDbContext : DbContext
 
         return result;
     }
+    
 }
 
 // CLASS HỖ TRỢ TRUNG GIAN ĐỂ CHUYỂN ĐỔI DICTIONARY THÀNH JSON

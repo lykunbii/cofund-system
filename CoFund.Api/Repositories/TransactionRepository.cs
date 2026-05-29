@@ -49,14 +49,14 @@ public class TransactionRepository : ITransactionRepository
             var group = await _context.Groups.FindAsync(transaction.GroupId);
             if (group == null) throw new Exception("Không tìm thấy thông tin quỹ!");
 
-            // [ĐÃ SỬA] Tước quyền cộng/trừ tiền trực tiếp ở đây để áp dụng Luồng Phê Duyệt
+            // 1. ĐÃ XÓA LOGIC CỘNG TRỪ TIỀN (Chỉ kiểm tra tính hợp lệ)
+            // Tiền sẽ không được cộng thẳng vào quỹ nữa mà phải chờ Admin duyệt ở Controller!
             if (transaction.TransactionType != 1 && transaction.TransactionType != 2)
             {
                 throw new Exception("Loại giao dịch không hợp lệ!");
             }
 
             transaction.TransactionDate = DateTime.Now;
-            transaction.Status = 0; // Đưa vào trạng thái Chờ duyệt
             _context.Transactions.Add(transaction);
             
             // Cố tình GỌI LƯU TẠM THỜI để lấy ID của transaction (nếu cần)
@@ -77,8 +77,7 @@ public class TransactionRepository : ITransactionRepository
                 {
                     UserId = m.UserId,
                     Title = $"Biến động số dư: {group.Name}",
-                    // Cập nhật câu chữ một chút cho hợp lý với việc "Gửi yêu cầu"
-                    Message = $"{user?.FullName ?? "Một thành viên"} vừa gửi yêu cầu {actionText} {amountText}đ. Lý do: {transaction.Note}",
+                    Message = $"{user?.FullName ?? "Một thành viên"} vừa gửi yêu cầu {actionText} {amountText}đ. Lý do: {transaction.Note}", // Đã sửa text thông báo một chút
                     CreatedAt = DateTime.Now,
                     IsRead = false
                 });
@@ -117,8 +116,7 @@ public class TransactionRepository : ITransactionRepository
         return await _context.Transactions
             .Where(t => t.GroupId == groupId)
             .Join(_context.Users, t => t.UserId, u => u.Id, (t, u) => new { t, u })
-            // [ĐÃ FIX LỖI ĐỎ] Ép kiểu (int?) cho c.Id để Entity Framework không cãi nhau về kiểu dữ liệu
-            .GroupJoin(_context.Categories, x => x.t.CategoryId, c => (int?)c.Id, (x, c) => new { x.t, x.u, c })
+            .GroupJoin(_context.Categories, x => x.t.CategoryId, c => c.Id, (x, c) => new { x.t, x.u, c })
             .SelectMany(x => x.c.DefaultIfEmpty(), (x, c) => new {
                 x.t.Id,
                 x.t.UserId,
@@ -129,7 +127,7 @@ public class TransactionRepository : ITransactionRepository
                 x.t.TransactionType,
                 x.t.TransactionDate,
                 x.t.Note,
-                x.t.Status // [MỚI THÊM] Để React đọc được trạng thái Vàng/Xanh/Đỏ
+                x.t.Status // MỚI THÊM: Để React đọc được trạng thái duyệt
             })
             .OrderByDescending(t => t.TransactionDate) 
             .ToListAsync();
